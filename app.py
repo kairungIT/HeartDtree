@@ -1,27 +1,95 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import joblib
+import os
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 
-# ============================================================
-# Page Configuration
-# ============================================================
 st.set_page_config(
     page_title="Heart Disease Predictor",
     page_icon="🫀",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # ============================================================
-# Custom CSS - ออกแบบให้สวยงามเรียบง่าย
+# สร้างโมเดลอัตโนมัติถ้ายังไม่มี
+# ============================================================
+@st.cache_resource
+def load_or_create_model():
+    model_file = 'heart_disease_pipeline.joblib'
+    
+    # ถ้าไม่มีไฟล์โมเดล ให้สร้างใหม่
+    if not os.path.exists(model_file):
+        st.warning("⚠️ ไม่พบไฟล์โมเดล กำลังสร้างโมเดลใหม่...")
+        
+        # โหลดข้อมูล
+        df = pd.read_csv('Heart4.csv')
+        
+        # Preprocessing
+        df['Cholesterol'] = df['Cholesterol'].replace(0, np.nan)
+        df['RestingBP'] = df['RestingBP'].replace(0, np.nan)
+        
+        X = df.drop('HeartDisease', axis=1)
+        y = df['HeartDisease']
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        
+        num_features = ['Age', 'RestingBP', 'Cholesterol', 'MaxHR', 'Oldpeak']
+        cat_features = ['Sex', 'ChestPainType', 'FastingBS', 'RestingECG', 
+                        'ExerciseAngina', 'ST_Slope']
+        
+        num_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ])
+        
+        cat_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='most_frequent')),
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ])
+        
+        preprocessor = ColumnTransformer(transformers=[
+            ('num', num_transformer, num_features),
+            ('cat', cat_transformer, cat_features)
+        ])
+        
+        model_pipeline = Pipeline(steps=[
+            ('preprocessor', preprocessor),
+            ('classifier', DecisionTreeClassifier(
+                random_state=42,
+                max_depth=6,
+                min_samples_split=10,
+                min_samples_leaf=5
+            ))
+        ])
+        
+        model_pipeline.fit(X_train, y_train)
+        
+        # บันทึกโมเดล
+        joblib.dump(model_pipeline, model_file)
+        st.success("✅ สร้างโมเดลสำเร็จ!")
+        
+        return model_pipeline
+    else:
+        # โหลดโมเดลที่มีอยู่แล้ว
+        return joblib.load(model_file)
+
+# โหลดโมเดล
+model = load_or_create_model()
+
+# ============================================================
+# Custom CSS
 # ============================================================
 st.markdown("""
 <style>
-    /* พื้นหลังและ typography */
     .main {
-        background: linear-gradient(135deg, #f5f7fa 0%, #e8edf3 100%);
-    }
-    .stApp {
         background: linear-gradient(135deg, #f5f7fa 0%, #e8edf3 100%);
     }
     h1 {
@@ -39,13 +107,7 @@ st.markdown("""
         font-weight: 600;
         font-size: 16px;
         width: 100%;
-        transition: all 0.3s ease;
     }
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 14px rgba(229, 62, 62, 0.3);
-    }
-    /* Card styling */
     .result-card {
         background: white;
         padding: 2rem;
@@ -54,35 +116,8 @@ st.markdown("""
         text-align: center;
         margin: 1rem 0;
     }
-    .sidebar-info {
-        background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
-    }
-    /* Input styling */
-    .stNumberInput, .stSelectbox {
-        background: white;
-        padding: 0.5rem;
-        border-radius: 8px;
-    }
 </style>
 """, unsafe_allow_html=True)
-
-# ============================================================
-# Load Model
-# ============================================================
-@st.cache_resource
-def load_model():
-    pipeline = joblib.load('heart_disease_pipeline.joblib')
-    metadata = joblib.load('heart_metadata.joblib')
-    return pipeline, metadata
-
-try:
-    model, metadata = load_model()
-except FileNotFoundError:
-    st.error("❌ ไม่พบไฟล์โมเดล! โปรดวางไฟล์ `heart_disease_pipeline.joblib` และ `heart_metadata.joblib` ในโฟลเดอร์เดียวกัน")
-    st.stop()
 
 # ============================================================
 # Header
@@ -98,22 +133,16 @@ with st.sidebar:
     st.markdown("### 📝 กรอกข้อมูลสุขภาพ")
     st.markdown("---")
     
-    # ข้อมูลทั่วไป
     st.markdown("#### 👤 ข้อมูลทั่วไป")
     age = st.number_input("อายุ (Age)", min_value=20, max_value=100, value=55, step=1)
     sex = st.selectbox("เพศ (Sex)", options=[1, 0], format_func=lambda x: "👨 ชาย" if x==1 else "👩 หญิง")
     
-    # อาการ
     st.markdown("#### 💔 อาการ")
     chest_pain = st.selectbox(
         "ประเภทอาการเจ็บหน้าอก",
         options=[1, 2, 3, 4],
-        format_func=lambda x: {
-            1: "Typical Angina",
-            2: "Atypical Angina", 
-            3: "Non-anginal Pain",
-            4: "Asymptomatic"
-        }[x]
+        format_func=lambda x: {1: "Typical Angina", 2: "Atypical Angina", 
+                               3: "Non-anginal Pain", 4: "Asymptomatic"}[x]
     )
     exercise_angina = st.selectbox(
         "เจ็บหน้าอกเมื่อออกกำลังกาย",
@@ -121,20 +150,18 @@ with st.sidebar:
         format_func=lambda x: "❌ ไม่" if x==0 else "✅ ใช่"
     )
     
-    # ค่าวัดร่างกาย
     st.markdown("#### 📊 ค่าวัดร่างกาย")
     resting_bp = st.number_input("ความดันโลหิตขณะพัก (mm Hg)", min_value=80, max_value=200, value=130)
     cholesterol = st.number_input("คอเลสเตอรอล (mg/dl)", min_value=100, max_value=600, value=240)
     max_hr = st.number_input("อัตราการเต้นหัวใจสูงสุด (bpm)", min_value=60, max_value=220, value=150)
     oldpeak = st.number_input("ST Depression (Oldpeak)", min_value=0.0, max_value=6.0, value=1.0, step=0.1)
     
-    # ผลตรวจอื่นๆ
     st.markdown("#### 🔬 ผลตรวจอื่นๆ")
-    fasting_bs = st.selectbox("น้ำตาลในเลือดหลังอดอาหาร > 120 mg/dl", options=[0, 1], format_func=lambda x: "❌ ไม่" if x==0 else "✅ ใช่")
+    fasting_bs = st.selectbox("น้ำตาลในเลือด > 120 mg/dl", options=[0, 1], format_func=lambda x: "❌ ไม่" if x==0 else "✅ ใช่")
     resting_ecg = st.selectbox(
-        "ผล Electrocardiogram ขณะพัก",
+        "ผล Electrocardiogram",
         options=[0, 1, 2],
-        format_func=lambda x: {0: "Normal", 1: "ST-T wave abnormality", 2: "Left ventricular hypertrophy"}[x]
+        format_func=lambda x: {0: "Normal", 1: "ST-T abnormality", 2: "Hypertrophy"}[x]
     )
     st_slope = st.selectbox(
         "ความชันของ ST segment",
@@ -165,7 +192,6 @@ with col2:
     st.markdown("### 🎯 ผลการทำนาย")
     
     if predict_button:
-        # ทำนายผล
         prediction = model.predict(input_data)[0]
         probability = model.predict_proba(input_data)[0]
         
@@ -180,8 +206,7 @@ with col2:
                 <h1 style="color: #e53e3e; margin: 0;">{risk_prob:.1f}%</h1>
             </div>
             """, unsafe_allow_html=True)
-            
-            st.warning("**คำแนะนำ:** ควรปรึกษาแพทย์ผู้เชี่ยวชาญเพื่อตรวจวินิจฉัยเพิ่มเติม")
+            st.warning("**คำแนะนำ:** ควรปรึกษาแพทย์ผู้เชี่ยวชาญ")
         else:
             safe_prob = probability[0] * 100
             st.markdown(f"""
@@ -193,10 +218,8 @@ with col2:
                 <h1 style="color: #38a169; margin: 0;">{safe_prob:.1f}%</h1>
             </div>
             """, unsafe_allow_html=True)
-            
-            st.success("**ดีใจด้วย!** รักษาสุขภาพต่อไปด้วยการออกกำลังกายและทานอาหารที่มีประโยชน์")
+            st.success("**ดีใจด้วย!** รักษาสุขภาพต่อไป")
         
-        # Progress bar แสดงความน่าจะเป็น
         st.markdown("#### 📊 การกระจายความน่าจะเป็น")
         prob_df = pd.DataFrame({
             'สถานะ': ['ไม่เป็นโรค', 'เป็นโรค'],
@@ -212,8 +235,8 @@ with col2:
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #718096; padding: 1rem;">
-    <p>⚕️ <strong>คำเตือน:</strong> ผลลัพธ์เป็นเพียงการคาดการณ์ทางสถิติจากโมเดล Machine Learning 
+    <p>⚕️ <strong>คำเตือน:</strong> ผลลัพธ์เป็นเพียงการคาดการณ์ทางสถิติ 
     ไม่สามารถใช้แทนการวินิจฉัยของแพทย์ได้</p>
-    <p>🤖 Powered by <strong>Decision Tree Classifier</strong> | Built with <strong>Streamlit</strong></p>
+    <p>🤖 Powered by <strong>Decision Tree</strong> | Built with <strong>Streamlit</strong></p>
 </div>
 """, unsafe_allow_html=True)
